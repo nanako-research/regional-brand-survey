@@ -14,7 +14,7 @@ RESULTS_FILE = "results.xlsx"
 
 
 # =====================
-# Excel読み込み
+# 設問Excel読み込み
 # =====================
 
 @st.cache_data
@@ -45,7 +45,6 @@ def init_results_file():
 
         empty_df = pd.DataFrame(columns=columns)
         empty_df.to_excel(RESULTS_FILE, index=False)
-
 
 init_results_file()
 
@@ -83,6 +82,7 @@ def save_answer(qid, question, answer, repeat_target=""):
 if "current_qid" not in st.session_state:
 
     st.session_state.current_qid = df.iloc[0]["QID"]
+
     st.session_state.answers = {}
 
     st.session_state.repeat_list = []
@@ -93,7 +93,7 @@ if "current_qid" not in st.session_state:
 
 
 # =====================
-# 中断ボタン
+# 回答中断ボタン
 # =====================
 
 if st.button("回答をやめる"):
@@ -103,7 +103,7 @@ if st.button("回答をやめる"):
 
 
 # =====================
-# 現在の設問取得（安全版）
+# 現在設問取得（安全処理）
 # =====================
 
 matching_rows = df[df["QID"] == st.session_state.current_qid]
@@ -117,14 +117,18 @@ current_row = matching_rows.iloc[0]
 
 
 qid = current_row["QID"]
+
 question = current_row["設問文"]
+
 answer_type = current_row["回答形式（単一選択 / 複数選択 / 自由記述 / 数値）"]
-next_q = current_row["次の設問（通常）"]
+
 choices = current_row["選択肢（カンマ区切り）"]
+
+next_q = current_row["次の設問（通常）"]
 
 
 # =====================
-# repeat対象表示
+# repeat対象取得
 # =====================
 
 repeat_target = ""
@@ -134,6 +138,9 @@ if st.session_state.repeat_list:
     repeat_target = st.session_state.repeat_list[
         st.session_state.repeat_index
     ]
+
+    # {word}置換（パイピング機能）
+    question = question.replace("{word}", repeat_target)
 
     st.info(f"対象：{repeat_target}")
 
@@ -147,7 +154,7 @@ st.write(question)
 
 
 # =====================
-# 回答入力
+# 回答入力UI
 # =====================
 
 answer = None
@@ -177,7 +184,7 @@ elif answer_type == "単一選択":
     )
 
 
-# 複数選択（通常）
+# 複数選択
 elif answer_type == "複数選択":
 
     options = choices.split(",")
@@ -189,10 +196,7 @@ elif answer_type == "複数選択":
     )
 
 
-# =====================
-# text5（自由記述5個）
-# =====================
-
+# text5
 elif answer_type == "text5":
 
     answers = []
@@ -216,10 +220,7 @@ elif answer_type == "text5":
         st.session_state.repeat_qid = next_q
 
 
-# =====================
-# multiselect5（最大5個選択）
-# =====================
-
+# multiselect5
 elif answer_type == "multiselect5":
 
     options = choices.split(",")
@@ -274,7 +275,7 @@ if st.button("次へ"):
 
                 if next_q == "END":
 
-                    st.success("調査完了です")
+                    st.success("調査完了です。ありがとうございました。")
                     st.stop()
 
                 else:
@@ -286,7 +287,7 @@ if st.button("次へ"):
 
             if next_q == "END":
 
-                st.success("調査完了です")
+                st.success("調査完了です。ありがとうございました。")
                 st.stop()
 
             else:
