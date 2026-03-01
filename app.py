@@ -8,7 +8,7 @@ st.title("地域ブランド ラダリング調査")
 @st.cache_data
 def load_questions():
     df = pd.read_excel(
-        "地域ブランド_ラダリング調査_テンプレート.xlsx",
+        "questions.xlsx",
         sheet_name="設問一覧"
     )
     return df
