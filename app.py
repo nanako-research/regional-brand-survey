@@ -1,32 +1,36 @@
 import streamlit as st
 import pandas as pd
+import re
 
-# タイトル
 st.title("地域ブランド ラダリング調査")
 
 # Excel読み込み
 @st.cache_data
 def load_questions():
-    df = pd.read_excel(
-        "questions.xlsx",
-        sheet_name="設問一覧"
-    )
-    return df
+    return pd.read_excel("questions.xlsx", sheet_name="設問一覧")
 
 df = load_questions()
 
-# セッション状態初期化
+# 初期化
 if "current_qid" not in st.session_state:
     st.session_state.current_qid = df.iloc[0]["QID"]
     st.session_state.answers = {}
 
-# 現在の設問取得
-current_row = df[df["QID"] == st.session_state.current_qid].iloc[0]
+# QID存在確認（安全化）
+matched = df[df["QID"] == st.session_state.current_qid]
+
+if matched.empty:
+    st.error(f"QID '{st.session_state.current_qid}' がExcelに存在しません")
+    st.stop()
+
+current_row = matched.iloc[0]
 
 qid = current_row["QID"]
 question = current_row["設問文"]
 answer_type = current_row["回答形式（単一選択 / 複数選択 / 自由記述 / 数値）"]
-next_q = current_row["次の設問（通常）"]
+
+normal_next = current_row["次の設問（通常）"]
+branch_next = current_row["次の設問（条件分岐）"]
 
 # 設問表示
 st.write(f"### {qid}")
@@ -35,72 +39,77 @@ st.write(question)
 # 回答入力
 answer = None
 
-# 自由記述
 if answer_type == "自由記述":
-    answer = st.text_input("回答を入力してください", key=qid)
+    answer = st.text_input("回答", key=qid)
 
-# 数値
 elif answer_type == "数値":
-    answer = st.number_input("数値を入力してください", key=qid)
+    answer = st.number_input("回答", key=qid)
 
-# 単一選択
 elif answer_type == "単一選択":
     options = current_row["選択肢（カンマ区切り）"].split(",")
-    answer = st.radio("選択してください", options, key=qid)
+    answer = st.radio("選択", options, key=qid)
 
-# 複数選択
 elif answer_type == "複数選択":
     options = current_row["選択肢（カンマ区切り）"].split(",")
-    answer = st.multiselect("選択してください", options, key=qid)
+    answer = st.multiselect("選択", options, key=qid)
 
-# text3, text5, text10 などに対応
-elif isinstance(answer_type, str) and answer_type.startswith("text"):
+elif answer_type == "text5":
+    answers = []
+    for i in range(5):
+        val = st.text_input(f"回答 {i+1}", key=f"{qid}_{i}")
+        if val:
+            answers.append(val)
+    answer = answers if answers else None
 
-    max_n = int(answer_type.replace("text", ""))
+# 条件分岐解析関数
+def get_next_q(answer, normal_next, branch_next):
 
-    st.write(f"思いつくものを最大 {max_n} 個まで入力してください")
+    # 条件分岐優先
+    if pd.notna(branch_next):
 
-    answers_list = []
+        parts = branch_next.split("/")
 
-    for i in range(max_n):
-        a = st.text_input(f"{i+1}つ目", key=f"{qid}_{i}")
-        if a.strip() != "":
-            answers_list.append(a.strip())
+        for part in parts:
 
-    answer = answers_list
+            match = re.match(r"(.*)→(.*)", part.strip())
+
+            if match:
+
+                condition = match.group(1).strip()
+                target = match.group(2).strip()
+
+                if answer == condition:
+                    return target
+
+    # 通常遷移
+    if pd.notna(normal_next):
+        return normal_next
+
+    return None
+
 
 # 次へボタン
 if st.button("次へ"):
 
-    # 未回答チェック
-    if (
-        answer is None
-        or answer == ""
-        or answer == []
-    ):
-        st.warning("回答を入力してください")
+    if answer is None or answer == "":
+        st.warning("回答してください")
 
     else:
 
-        # 回答保存
         st.session_state.answers[qid] = answer
 
-        # 終了処理
-        if next_q == "END":
+        next_q = get_next_q(answer, normal_next, branch_next)
 
-            st.success("調査完了です。ありがとうございました。")
+        if next_q == "END" or next_q is None:
+
+            st.success("調査完了です")
 
             st.write("### 回答結果")
 
             for k, v in st.session_state.answers.items():
-
-                # リストの場合（text5など）
-                if isinstance(v, list):
-                    st.write(f"{k}: {', '.join(v)}")
-
-                else:
-                    st.write(f"{k}: {v}")
+                st.write(k, ":", v)
 
         else:
+
             st.session_state.current_qid = next_q
             st.rerun()
