@@ -1,298 +1,207 @@
 import streamlit as st
 import pandas as pd
-import os
+import uuid
 from datetime import datetime
 
-# =====================
-# 基本設定
-# =====================
+# =========================
+# 初期設定
+# =========================
 
-st.title("地域ブランド ラダリング調査")
+QUESTION_FILE = "questions.xlsx"
+ANSWER_FILE = "answers.xlsx"
 
-QUESTIONS_FILE = "questions.xlsx"
-RESULTS_FILE = "results.xlsx"
+st.set_page_config(page_title="アンケート", layout="centered")
 
-
-# =====================
-# 設問Excel読み込み
-# =====================
+# =========================
+# 質問読み込み
+# =========================
 
 @st.cache_data
 def load_questions():
-    df = pd.read_excel(QUESTIONS_FILE, sheet_name="設問一覧")
+
+    df = pd.read_excel(QUESTION_FILE)
+
     df = df.fillna("")
-    return df
 
-df = load_questions()
+    questions = {}
 
+    for _, row in df.iterrows():
 
-# =====================
-# results.xlsx 初期化
-# =====================
+        q = row.to_dict()
 
-def init_results_file():
+        qid = str(q["QID"]).strip()
 
-    if not os.path.exists(RESULTS_FILE):
+        if qid == "":
+            continue
 
-        columns = [
-            "回答ID",
-            "回答日時",
-            "QID",
-            "設問文",
-            "回答",
-            "繰り返し対象"
-        ]
+        # options
+        if "options" in q and q["options"] != "":
+            q["options"] = [x.strip() for x in str(q["options"]).split(",")]
+        else:
+            q["options"] = []
 
-        empty_df = pd.DataFrame(columns=columns)
-        empty_df.to_excel(RESULTS_FILE, index=False)
+        # branch
+        branch = {}
+        for col in df.columns:
+            if col.startswith("branch_"):
+                key = col.replace("branch_", "")
+                val = str(q[col]).strip()
+                if val != "":
+                    branch[key] = val
 
-init_results_file()
+        q["branch"] = branch
 
+        # next
+        q["next"] = str(q.get("next", "")).strip()
 
-# =====================
-# 回答保存
-# =====================
+        questions[qid] = q
 
-def save_answer(qid, question, answer, repeat_target=""):
-
-    df_existing = pd.read_excel(RESULTS_FILE)
-
-    if len(df_existing) == 0:
-        new_id = 1
-    else:
-        new_id = df_existing["回答ID"].max() + 1
-
-    new_row = pd.DataFrame([{
-        "回答ID": new_id,
-        "回答日時": datetime.now(),
-        "QID": qid,
-        "設問文": question,
-        "回答": str(answer),
-        "繰り返し対象": repeat_target
-    }])
-
-    df_new = pd.concat([df_existing, new_row], ignore_index=True)
-    df_new.to_excel(RESULTS_FILE, index=False)
+    return questions
 
 
-# =====================
-# セッション状態初期化
-# =====================
+questions = load_questions()
+
+# =========================
+# セッション初期化
+# =========================
 
 if "current_qid" not in st.session_state:
-
-    st.session_state.current_qid = df.iloc[0]["QID"]
-
+    st.session_state.current_qid = list(questions.keys())[0]
     st.session_state.answers = {}
+    st.session_state.finished = False
+    st.session_state.quit = False
+    st.session_state.respondent_id = str(uuid.uuid4())
 
-    st.session_state.repeat_list = []
-    st.session_state.repeat_index = 0
-    st.session_state.repeat_qid = None
+# =========================
+# 保存処理
+# =========================
 
-    st.session_state.start_time = datetime.now()
+def save_answers():
 
+    data = []
 
-# =====================
-# 回答中断ボタン
-# =====================
+    for qid, answer in st.session_state.answers.items():
 
-if st.button("回答をやめる"):
+        data.append({
+            "respondent_id": st.session_state.respondent_id,
+            "timestamp": datetime.now(),
+            "QID": qid,
+            "answer": answer
+        })
 
-    st.warning("回答を中断しました。ご協力ありがとうございました。")
+    df = pd.DataFrame(data)
+
+    try:
+        old = pd.read_excel(ANSWER_FILE)
+        df = pd.concat([old, df], ignore_index=True)
+    except:
+        pass
+
+    df.to_excel(ANSWER_FILE, index=False)
+
+# =========================
+# 中断ボタン
+# =========================
+
+if not st.session_state.finished:
+
+    if st.button("回答をやめる"):
+
+        save_answers()
+
+        st.session_state.quit = True
+        st.session_state.finished = True
+
+        st.rerun()
+
+# =========================
+# 終了画面
+# =========================
+
+if st.session_state.finished:
+
+    if st.session_state.quit:
+        st.write("回答を中断しました。ご協力ありがとうございました。")
+    else:
+        st.write("回答が完了しました。ありがとうございました。")
+
     st.stop()
 
+# =========================
+# 質問取得
+# =========================
 
-# =====================
-# 現在設問取得（安全処理）
-# =====================
+qid = st.session_state.current_qid
 
-matching_rows = df[df["QID"] == st.session_state.current_qid]
-
-if len(matching_rows) == 0:
-
-    st.error(f"QID '{st.session_state.current_qid}' がExcelに存在しません。")
+if qid not in questions:
+    st.error(f"QID '{qid}' がExcelに存在しません")
     st.stop()
 
-current_row = matching_rows.iloc[0]
+q = questions[qid]
 
+# =========================
+# 質問表示
+# =========================
 
-qid = current_row["QID"]
-
-question = current_row["設問文"]
-
-answer_type = current_row["回答形式（単一選択 / 複数選択 / 自由記述 / 数値）"]
-
-choices = current_row["選択肢（カンマ区切り）"]
-
-next_q = current_row["次の設問（通常）"]
-
-
-# =====================
-# repeat対象取得
-# =====================
-
-repeat_target = ""
-
-if st.session_state.repeat_list:
-
-    repeat_target = st.session_state.repeat_list[
-        st.session_state.repeat_index
-    ]
-
-    # {word}置換（パイピング機能）
-    question = question.replace("{word}", repeat_target)
-
-    st.info(f"対象：{repeat_target}")
-
-
-# =====================
-# 設問表示
-# =====================
-
-st.write(f"### {qid}")
-st.write(question)
-
-
-# =====================
-# 回答入力UI
-# =====================
+st.write(q["text"])
 
 answer = None
 
+type_ = q["type"]
 
-# 自由記述
-if answer_type == "自由記述":
-
-    answer = st.text_input("回答してください", key=qid)
-
-
-# 数値
-elif answer_type == "数値":
-
-    answer = st.number_input("数値を入力してください", key=qid)
-
-
-# 単一選択
-elif answer_type == "単一選択":
-
-    options = choices.split(",")
-
-    answer = st.radio(
-        "選択してください",
-        options,
-        key=qid
-    )
-
-
-# 複数選択
-elif answer_type == "複数選択":
-
-    options = choices.split(",")
-
-    answer = st.multiselect(
-        "選択してください",
-        options,
-        key=qid
-    )
-
+# text
+if type_ == "text":
+    answer = st.text_input("")
 
 # text5
-elif answer_type == "text5":
+elif type_ == "text5":
 
     answers = []
 
     for i in range(5):
-
-        val = st.text_input(
-            f"{i+1}つ目",
-            key=f"{qid}_{i}"
-        )
-
-        if val != "":
-            answers.append(val)
+        a = st.text_input(f"{i+1}つ目", key=f"{qid}_{i}")
+        if a != "":
+            answers.append(a)
 
     answer = answers
 
-    if answers:
+# radio
+elif type_ == "radio":
 
-        st.session_state.repeat_list = answers
-        st.session_state.repeat_index = 0
-        st.session_state.repeat_qid = next_q
-
+    answer = st.radio("", q["options"])
 
 # multiselect5
-elif answer_type == "multiselect5":
+elif type_ == "multiselect5":
 
-    options = choices.split(",")
+    answer = st.multiselect("", q["options"], max_selections=5)
 
-    answers = st.multiselect(
-        "5つまで選択してください",
-        options,
-        max_selections=5,
-        key=qid
-    )
-
-    answer = answers
-
-    if answers:
-
-        st.session_state.repeat_list = answers
-        st.session_state.repeat_index = 0
-        st.session_state.repeat_qid = next_q
-
-
-# =====================
+# =========================
 # 次へボタン
-# =====================
+# =========================
 
 if st.button("次へ"):
 
-    if answer is None or answer == "" or answer == []:
+    st.session_state.answers[qid] = answer
 
-        st.warning("回答してください")
+    next_qid = ""
+
+    # branch優先
+    if isinstance(answer, list):
+        next_qid = q["next"]
+    else:
+        if answer in q["branch"]:
+            next_qid = q["branch"][answer]
+        else:
+            next_qid = q["next"]
+
+    if next_qid == "" or next_qid == "END":
+
+        save_answers()
+
+        st.session_state.finished = True
 
     else:
 
-        save_answer(qid, question, answer, repeat_target)
+        st.session_state.current_qid = next_qid
 
-        st.session_state.answers[qid] = answer
-
-
-        # repeat処理
-        if st.session_state.repeat_list:
-
-            st.session_state.repeat_index += 1
-
-            if st.session_state.repeat_index < len(st.session_state.repeat_list):
-
-                st.session_state.current_qid = st.session_state.repeat_qid
-
-            else:
-
-                st.session_state.repeat_list = []
-                st.session_state.repeat_index = 0
-                st.session_state.repeat_qid = None
-
-                if next_q == "END":
-
-                    st.success("調査完了です。ありがとうございました。")
-                    st.stop()
-
-                else:
-
-                    st.session_state.current_qid = next_q
-
-
-        else:
-
-            if next_q == "END":
-
-                st.success("調査完了です。ありがとうございました。")
-                st.stop()
-
-            else:
-
-                st.session_state.current_qid = next_q
-
-
-        st.rerun()
+    st.rerun()
